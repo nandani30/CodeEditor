@@ -1,0 +1,283 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/**
+ * USERS
+ */
+model User {
+  id             String   @id @default(cuid())
+  email          String   @unique
+  password       String
+  name           String?
+  profilePicture String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  ownedProjects Project[]            @relation("ProjectOwner")
+  sessions      SessionParticipant[]
+  sessionsOwned CollabSession[]      @relation("SessionsOwned")
+
+  aiMessages AIMessage[] // messages authored by this user (when sender=user)
+  streaks    Streak[] // Streak tracking
+
+  // Challenges and flashcards that belong to this user
+  challenges Challenge[]
+  flashcards Flashcard[]
+
+  codingSessions CodingSession[] // coding session history
+}
+
+/**
+ * PROJECTS
+ */
+model Project {
+  id          String   @id @default(cuid())
+  name        String
+  description String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  ownerId String
+  owner   User   @relation("ProjectOwner", fields: [ownerId], references: [id])
+
+  folders    Folder[] // Folders related to this project
+  files      File[] // Files related to this project
+  aiMessages AIMessage[] // AI messages related to this project
+  sessions   CollabSession[] // Collaborative sessions related to this project
+
+  // Flashcards tied to the project
+  flashcards Flashcard[]
+
+  whiteboard Whiteboard?
+
+  @@index([ownerId])
+}
+
+/**
+ * FOLDERS + FILES (HIERARCHY)
+ */
+model Folder {
+  id        String  @id @default(cuid())
+  name      String
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id])
+
+  parentFolderId String?
+  parentFolder   Folder?  @relation("FolderChildren", fields: [parentFolderId], references: [id])
+  subfolders     Folder[] @relation("FolderChildren")
+
+  files     File[] // Files in this folder
+  createdAt DateTime @default(now())
+
+  @@index([projectId])
+  @@index([projectId, parentFolderId, name])
+}
+
+model File {
+  id        String  @id @default(cuid())
+  name      String
+  content   String
+  extension String?
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id])
+
+  folderId String?
+  folder   Folder? @relation(fields: [folderId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([folderId])
+}
+
+model Whiteboard {
+  id        String   @id @default(cuid())
+  projectId String   @unique
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+
+  data      Json     // Excalidraw JSON (elements, appState, files)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+
+/**
+ * COLLAB SESSIONS (TEMPORARY “MEETING”)
+ */
+enum SessionRole {
+  VIEWER
+  EDITOR
+}
+
+model CollabSession {
+  id        String  @id @default(cuid())
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id])
+
+  ownerId String
+  owner   User   @relation("SessionsOwned", fields: [ownerId], references: [id])
+
+  isActive  Boolean  @default(true)
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  participants   SessionParticipant[] // participants
+  whiteboardData Json? // optional
+
+  aiMessages AIMessage[] @relation("SessionMessages") // messages associated with session
+
+  @@index([projectId])
+  @@index([ownerId])
+  @@index([isActive, expiresAt])
+}
+
+model SessionParticipant {
+  id        String        @id @default(cuid())
+  sessionId String
+  session   CollabSession @relation(fields: [sessionId], references: [id])
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id])
+
+  displayName String?
+  role        SessionRole @default(VIEWER)
+  canEdit     Boolean     @default(false)
+  joinedAt    DateTime    @default(now())
+
+  @@index([sessionId])
+  @@index([userId])
+}
+
+/**
+ * AI CHAT (per project, optional per session)
+ */
+enum AiSender {
+  user
+  ai
+  system
+}
+
+model AIMessage {
+  id        String   @id @default(cuid())
+  sender    AiSender
+  content   String
+  createdAt DateTime @default(now())
+
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id])
+
+  userId String?
+  user   User?   @relation(fields: [userId], references: [id]) // relation to user who sent (optional)
+
+  sessionId String?
+  session   CollabSession? @relation("SessionMessages", fields: [sessionId], references: [id])
+
+  @@index([projectId, createdAt])
+  @@index([sessionId])
+  @@index([userId])
+}
+
+/**
+ * EMAIL OTP
+ */
+model EmailOTP {
+  id        String   @id @default(cuid())
+  email     String
+  otp       String
+  expiresAt DateTime
+  createdAt DateTime @default(now())
+
+  @@index([email])
+}
+
+/**
+ * CODING SESSIONS
+ */
+model CodingSession {
+  id        String   @id @default(cuid())
+  user      User     @relation(fields: [userId], references: [id])
+  userId    String
+  startTime DateTime @default(now())
+  endTime   DateTime
+  duration  Int
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+  @@index([startTime])
+}
+
+/**
+ * STREAK
+ */
+model Streak {
+  id          String     @id @default(cuid())
+  user        User       @relation(fields: [userId], references: [id])
+  userId      String
+  streakType  StreakType
+  streakCount Int
+  lastActive  DateTime
+  createdAt   DateTime   @default(now())
+  updatedAt   DateTime   @updatedAt
+
+  @@index([userId])
+}
+
+enum StreakType {
+  DAILY
+  WEEKLY
+}
+
+/**
+ * FLASHCARDS + CHALLENGES
+ * Note: Challenge.data is Json so you can store boilerplates per language and test cases:
+ * { description, boilerplates: [{language, languageId, starterCode}], testCases: [...] }
+ */
+model Flashcard {
+  id        String  @id @default(cuid())
+  title     String
+  topic     String
+  content   String
+  projectId String
+  project   Project @relation(fields: [projectId], references: [id])
+  userId    String
+  user      User    @relation(fields: [userId], references: [id])
+
+  // reverse relation: challenges created from this flashcard
+  challenges Challenge[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([userId])
+}
+
+model Challenge {
+  id     String @id @default(cuid())
+  userId String
+  user   User   @relation(fields: [userId], references: [id])
+
+  flashcardId String
+  flashcard   Flashcard @relation(fields: [flashcardId], references: [id])
+
+  // "coding" or "quiz"
+  type String
+  // flexible shape: { description, boilerplates: [...], testCases: [...] } or { questions: [...] }
+  data Json
+
+  status     String  @default("PENDING")
+  difficulty String?
+
+  createdAt DateTime @default(now())
+
+  @@index([userId, status])
+}
