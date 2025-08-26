@@ -1,0 +1,28 @@
+# Node modules
+node_modules/
+
+# Environment variables
+.env
+.env.*
+!.env.example   # keep a template for recruiters
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Build output
+dist/
+build/
+.next/
+out/
+
+# Prisma
+.prisma/
+generated/
+prisma/migrations/*/steps.json
+
+# OS files
+.DS_Store
+Thumbs.db
